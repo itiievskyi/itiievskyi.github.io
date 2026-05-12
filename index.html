@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Webhooks in production</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@300..800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --font: 'Onest', system-ui, sans-serif;
+  --mono: 'Fira Code', 'Consolas', monospace;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+
+  --bg:    oklch(0.975 0.004 75);
+  --s1:    oklch(0.960 0.006 75);
+  --s2:    oklch(0.930 0.009 75);
+  --s3:    oklch(0.905 0.010 75);
+  --bd:    oklch(0.878 0.007 75);
+  --bd2:   oklch(0.820 0.009 75);
+
+  --tx:    oklch(0.175 0.015 75);
+  --tx2:   oklch(0.440 0.012 75);
+  --tx3:   oklch(0.630 0.008 75);
+
+  --ac:    oklch(0.420 0.200 268);
+  --ac-bg: oklch(0.955 0.022 268);
+  --ac-bd: oklch(0.820 0.062 268);
+  --ac-tx: oklch(0.420 0.200 268);
+
+  --ok:    oklch(0.490 0.155 145);
+  --ok-bg: oklch(0.960 0.022 145);
+  --ok-bd: oklch(0.820 0.062 145);
+
+  --er:    oklch(0.490 0.175 25);
+  --er-bg: oklch(0.970 0.018 25);
+  --er-bd: oklch(0.830 0.068 25);
+
+  --wn:    oklch(0.530 0.140 76);
+  --wn-bg: oklch(0.970 0.022 76);
+  --wn-bd: oklch(0.840 0.072 76);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.140 0.008 270); --s1: oklch(0.175 0.010 270);
+    --s2: oklch(0.205 0.010 270); --s3: oklch(0.235 0.010 270);
+    --bd: oklch(0.265 0.012 270); --bd2: oklch(0.325 0.012 270);
+    --tx: oklch(0.920 0.008 270); --tx2: oklch(0.640 0.010 270); --tx3: oklch(0.440 0.008 270);
+    --ac: oklch(0.680 0.180 268); --ac-bg: oklch(0.200 0.040 268); --ac-bd: oklch(0.360 0.100 268); --ac-tx: oklch(0.680 0.180 268);
+    --ok: oklch(0.660 0.150 145); --ok-bg: oklch(0.190 0.040 145); --ok-bd: oklch(0.350 0.100 145);
+    --er: oklch(0.660 0.170 25);  --er-bg: oklch(0.190 0.040 25);  --er-bd: oklch(0.360 0.100 25);
+    --wn: oklch(0.720 0.130 76);  --wn-bg: oklch(0.200 0.040 76);  --wn-bd: oklch(0.380 0.100 76);
+  }
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--tx);
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1.5rem;
+}
+.deck { width: 100%; max-width: 900px; }
+.progress-wrap { height: 3px; background: var(--bd); border-radius: 2px; margin-bottom: 1.25rem; overflow: hidden; }
+.progress-bar { height: 100%; background: var(--ac); border-radius: 2px; transition: width 0.3s cubic-bezier(.4,0,.2,1); }
+.card { background: var(--s1); border: 0.5px solid var(--bd); border-radius: var(--r-lg); padding: 1rem 1.125rem; }
+.muted { background: var(--s2); border-radius: var(--r-md); padding: 0.75rem 1rem; }
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.g3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.g4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+.slide { display: none; }
+.slide.active { display: block; animation: fadeUp 0.18s ease; }
+@keyframes fadeUp { from { opacity:0; transform:translateY(7px) } to { opacity:1; transform:translateY(0) } }
+.sl  { font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--tx3); margin-bottom:4px; }
+.st  { font-size:26px; font-weight:700; line-height:1.2; color:var(--tx); margin-bottom:4px; }
+.ss  { font-size:14px; color:var(--tx2); line-height:1.55; margin-bottom:1.1rem; }
+.lh  { font-size:13px; font-weight:600; color:var(--tx); margin-bottom:6px; }
+.bp  { font-size:13px; color:var(--tx2); line-height:1.75; }
+.pts { font-size:13px; color:var(--tx2); line-height:1.8; padding-left:16px; }
+.pts li + li { margin-top:2px; }
+.code {
+  font-family: var(--mono); font-size:11.5px; line-height:1.65;
+  background: var(--s2); border: 0.5px solid var(--bd); border-radius: var(--r-md);
+  padding: 10px 14px; white-space: pre; overflow-x: auto; margin: 8px 0;
+}
+.kw  { color: var(--ac-tx); }
+.fn  { color: var(--ok); }
+.str { color: var(--wn); }
+.cm  { color: var(--tx3); font-style: italic; }
+code { font-family: var(--mono); font-size: 11px; }
+.tag { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:99px; margin-right:4px; }
+.tok { background:var(--ok-bg); color:var(--ok); }
+.ter { background:var(--er-bg); color:var(--er); }
+.tac { background:var(--ac-bg); color:var(--ac-tx); }
+.twn { background:var(--wn-bg); color:var(--wn); }
+.nav { display:flex; align-items:center; gap:10px; margin-top:1rem; padding-top:.875rem; border-top:.5px solid var(--bd); }
+.nb { background:none; border:.5px solid var(--bd2); border-radius:var(--r-md); padding:5px 16px; font-size:13px; font-family:var(--font); color:var(--tx2); cursor:pointer; }
+.nb:hover { background:var(--s2); } .nb:disabled { opacity:.3; cursor:default; }
+.nav-info { flex:1; text-align:center; font-size:12px; color:var(--tx3); }
+
+/* HMAC playground */
+.fl { display:block; font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--tx3); margin-bottom:4px; }
+.fi { width:100%; font-family:var(--mono); font-size:12px; padding:8px 10px; background:var(--s2); border:.5px solid var(--bd2); border-radius:var(--r-md); color:var(--tx); outline:none; transition:border-color .15s; }
+.fi:focus { border-color: var(--ac); }
+.fta { width:100%; font-family:var(--mono); font-size:12px; padding:8px 10px; background:var(--s2); border:.5px solid var(--bd2); border-radius:var(--r-md); color:var(--tx); outline:none; resize:vertical; min-height:68px; transition:border-color .15s; }
+.fta:focus { border-color: var(--ac); }
+.sig-out { font-family:var(--mono); font-size:11px; padding:9px 12px; background:var(--s3); border:.5px solid var(--bd); border-radius:var(--r-md); color:var(--tx); word-break:break-all; min-height:34px; line-height:1.55; }
+
+/* email mock */
+.email-mock { background:#fafafa; border:1px solid #e0e0e0; border-radius:var(--r-lg); padding:1.25rem 1.5rem; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:13px; line-height:1.7; color:#333; box-shadow:0 2px 12px rgba(0,0,0,.07); }
+@media (prefers-color-scheme:dark) { .email-mock { background:oklch(0.20 0.005 75); border-color:oklch(0.30 0.005 75); color:oklch(0.85 0.008 75); } }
+.email-meta { font-size:11px; color:#999; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #e8e8e8; }
+.email-link { color:#2563eb; }
+</style>
+</head>
+<body>
+<div class="deck">
+<div class="progress-wrap"><div class="progress-bar" id="pb" style="width:0%"></div></div>
+<div id="pres">
+
+<!-- SLIDE 0 — title -->
+<div class="slide active" id="s0">
+  <p class="sl">Igor Tiievskyi | Performance and Security of Software Systems</p>
+  <h1 class="st">Webhooks in production</h1>
+  <p class="ss">Security and reliability decisions from a real multi-channel SaaS platform</p>
+  <div class="g2" style="margin-bottom:1rem">
+    <div class="muted" style="text-align:center">
+      <div style="font-size:28px;font-weight:700;color:var(--ac)">~3 000</div>
+      <div style="font-size:12px;color:var(--tx2);margin-top:2px">webhook deliveries / hour from Shopify alone</div>
+    </div>
+    <div class="muted" style="text-align:center">
+      <div style="font-size:28px;font-weight:700;color:var(--ac)">2</div>
+      <div style="font-size:12px;color:var(--tx2);margin-top:2px">HMAC integrations — one standard, one we proposed ourselves</div>
+    </div>
+  </div>
+  <div class="card">
+    <p class="lh">Context</p>
+    <p class="bp">The platform syncs orders and products across Shopify, Amazon, Etsy, and eBay, and uses different carriers for logistics, including Nova Poshta. We needed data to arrive quickly, but also needed to trust it. Webhooks became the place where performance and security stopped being separate topics.</p>
+  </div>
+</div>
+
+<!-- SLIDE 1 — what is a webhook -->
+<div class="slide" id="s1">
+  <p class="sl">00 — concept</p>
+  <h1 class="st">What is a webhook in practice?</h1>
+  <p class="ss">The control flow is inverted: instead of asking constantly, you wait for the provider to call you.</p>
+  <div class="g2">
+    <div class="card">
+      <p class="lh">The basic idea</p>
+      <p class="bp" style="margin-bottom:10px">You register a URL with the provider: <em>"When X happens, POST the event data here."</em> After that, the provider decides when to send the request.</p>
+      <p class="bp" style="margin-bottom:10px">Polling is calling the delivery company every 5 minutes to ask if the parcel arrived. A webhook is giving them your number so they call when it does.</p>
+      <ul class="pts">
+        <li>You control the endpoint URL</li>
+        <li>Provider controls when to fire</li>
+        <li>Payload is a plain HTTP POST with a JSON body</li>
+        <li>Your server must respond with 2xx within a timeout</li>
+      </ul>
+    </div>
+    <div>
+      <svg width="100%" viewBox="0 0 300 230" style="display:block">
+        <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+        <!-- step 1: register -->
+        <rect x="10" y="10" width="120" height="32" rx="7" fill="var(--ac-bg)" stroke="var(--ac-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" font-weight="600" x="70" y="24" text-anchor="middle" fill="var(--ac-tx)">Your app</text>
+        <text font-family="var(--font)" font-size="11" x="70" y="36" text-anchor="middle" fill="var(--ac-tx)">POST /api/webhooks</text>
+        <rect x="170" y="10" width="120" height="32" rx="7" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" font-weight="600" x="230" y="24" text-anchor="middle" fill="var(--tx)">Shopify</text>
+        <text font-family="var(--font)" font-size="11" x="230" y="36" text-anchor="middle" fill="var(--tx2)">+ your callback URL</text>
+        <line x1="132" y1="26" x2="168" y2="26" stroke="var(--ac)" stroke-width="1" marker-end="url(#arr)"/>
+        <text font-family="var(--font)" font-size="10" x="150" y="21" text-anchor="middle" fill="var(--tx3)">register</text>
+
+        <!-- event fires -->
+        <rect x="180" y="76" width="100" height="32" rx="7" fill="var(--ok-bg)" stroke="var(--ok-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" font-weight="600" x="230" y="90" text-anchor="middle" fill="var(--ok)">Event fires</text>
+        <text font-family="var(--font)" font-size="11" x="230" y="102" text-anchor="middle" fill="var(--ok)">order created</text>
+        <line x1="230" y1="44" x2="230" y2="74" stroke="var(--bd2)" stroke-width="0.5" stroke-dasharray="3 2"/>
+
+        <!-- delivery -->
+        <line x1="178" y1="108" x2="130" y2="140" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text font-family="var(--font)" font-size="11" x="128" y="128" text-anchor="end" fill="var(--ok)">POST /webhook</text>
+        <text font-family="var(--font)" font-size="10" x="128" y="140" text-anchor="end" fill="var(--tx3)">JSON body + signature</text>
+
+        <!-- your endpoint -->
+        <rect x="10" y="142" width="120" height="32" rx="7" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" font-weight="600" x="70" y="156" text-anchor="middle" fill="var(--tx)">Your endpoint</text>
+        <text font-family="var(--font)" font-size="11" x="70" y="168" text-anchor="middle" fill="var(--tx2)">/shopify/webhooks</text>
+
+        <!-- 200 OK -->
+        <line x1="132" y1="174" x2="178" y2="174" stroke="var(--tx3)" stroke-width="0.8" marker-end="url(#arr)"/>
+        <text font-family="var(--font)" font-size="11" x="154" y="169" text-anchor="middle" fill="var(--tx3)">200 OK</text>
+
+        <!-- Shopify timeout note -->
+        <rect x="10" y="200" width="280" height="22" rx="5" fill="var(--wn-bg)" stroke="var(--wn-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" x="150" y="215" text-anchor="middle" fill="var(--wn)">⚠ Shopify waits limited time for your response</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 2 — why not poll -->
+<div class="slide" id="s2">
+  <p class="sl">01 — the problem</p>
+  <h1 class="st">Why not just ask the API every minute?</h1>
+  <p class="ss">Polling feels simple until rate limits, latency and empty responses start shaping the architecture.</p>
+  <div class="g2">
+    <div class="card">
+      <p class="lh"><span class="tag ter">polling</span>pull model</p>
+      <svg width="100%" viewBox="0 0 290 148" style="display:block;margin:8px 0">
+        <defs><marker id="p0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+        <rect x="10" y="84" width="80" height="28" rx="6" fill="none" stroke="var(--bd2)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="50" y="102" text-anchor="middle" fill="var(--tx)">Your app</text>
+        <rect x="200" y="72" width="80" height="28" rx="6" fill="none" stroke="var(--bd2)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="240" y="90" text-anchor="middle" fill="var(--tx)">API</text>
+        <line x1="92" y1="114" x2="198" y2="102" stroke="var(--tx3)" stroke-width="1" marker-end="url(#p0)" stroke-dasharray="3 2" opacity="0"><animate attributeName="opacity" values="0;.8;.8;0" dur="3s" begin="0s" repeatCount="indefinite"/></line>
+        <line x1="92" y1="98" x2="198" y2="86" stroke="var(--tx3)" stroke-width="1" marker-end="url(#p0)" stroke-dasharray="3 2" opacity="0"><animate attributeName="opacity" values="0;.8;.8;0" dur="3s" begin="1s" repeatCount="indefinite"/></line>
+        <line x1="92" y1="82" x2="198" y2="70" stroke="var(--tx3)" stroke-width="1" marker-end="url(#p0)" stroke-dasharray="3 2" opacity="0"><animate attributeName="opacity" values="0;.8;.8;0" dur="3s" begin="2s" repeatCount="indefinite"/></line>
+        <text font-family="var(--font)" font-size="12" x="145" y="54" text-anchor="middle" fill="var(--er)" font-weight="600" opacity="0"><animate attributeName="opacity" values="0;0;0;0;1;1;0" dur="3s" begin="2s" repeatCount="indefinite"/>429 — Rate limited</text>
+      </svg>
+      <ul class="pts">
+        <li>Most responses: "nothing changed" — wasted quota</li>
+        <li>Shopify enforces strict per-minute request caps</li>
+        <li>Nova Poshta: tight limits on tracking lookups</li>
+        <li>Polling faster does not guarantee fresher data</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="lh"><span class="tag tok">webhook</span>push model</p>
+      <svg width="100%" viewBox="0 0 290 148" style="display:block;margin:8px 0">
+        <defs><marker id="p1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+        <rect x="10" y="108" width="80" height="28" rx="6" fill="none" stroke="var(--bd2)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="50" y="126" text-anchor="middle" fill="var(--tx)">Our app</text>
+        <rect x="200" y="108" width="80" height="28" rx="6" fill="none" stroke="var(--bd2)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="240" y="126" text-anchor="middle" fill="var(--tx)">Shopify</text>
+        <circle cx="240" cy="46" r="28" fill="var(--ok-bg)" stroke="var(--ok-bd)" stroke-width="0.5"><animate attributeName="r" values="26;28;26" dur="2s" repeatCount="indefinite"/></circle>
+        <text font-family="var(--font)" font-size="11" x="240" y="43" text-anchor="middle" fill="var(--ok)" font-weight="600">Order</text>
+        <text font-family="var(--font)" font-size="11" x="240" y="56" text-anchor="middle" fill="var(--ok)">placed</text>
+        <line x1="240" y1="64" x2="240" y2="106" stroke="var(--ok-bd)" stroke-width="0.5" stroke-dasharray="3 2"/>
+        <line x1="198" y1="122" x2="94" y2="122" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#p1)" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0" dur="3s" begin="1s" repeatCount="indefinite"/></line>
+        <text font-family="var(--font)" font-size="11" x="145" y="116" text-anchor="middle" fill="var(--ok)" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0" dur="3s" begin="1s" repeatCount="indefinite"/>POST /webhook</text>
+      </svg>
+      <ul class="pts">
+        <li>The provider pushes the event when it happens</li>
+        <li>Zero API quota spent polling for updates</li>
+        <li>Nova Poshta: tracking number arrives instantly</li>
+        <li>Requests grow with real events, not with repeated checks over time</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 3 — HMAC intro -->
+<div class="slide" id="s3">
+  <p class="sl">02 — authenticity</p>
+  <h1 class="st">Can you trust the request that hit your endpoint?</h1>
+  <p class="ss">The webhook URL is public. The signature is what separates a real provider event from a random POST request.</p>
+  <svg width="100%" viewBox="0 0 700 108" style="display:block;margin-bottom:13px">
+    <defs><marker id="h0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+    <text font-family="var(--font)" font-size="11" x="180" y="14" text-anchor="middle" fill="var(--tx3)">sender (Shopify)</text>
+    <text font-family="var(--font)" font-size="11" x="540" y="14" text-anchor="middle" fill="var(--tx3)">receiver (your platform)</text>
+    <line x1="390" y1="18" x2="390" y2="100" stroke="var(--bd)" stroke-width="0.5" stroke-dasharray="4 2"/>
+    <rect x="10" y="26" width="82" height="36" rx="6" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="51" y="44" text-anchor="middle" fill="var(--tx)">Payload</text>
+    <text font-family="var(--font)" font-size="11" x="51" y="56" text-anchor="middle" fill="var(--tx2)">JSON body</text>
+    <rect x="6" y="72" width="90" height="20" rx="4" fill="var(--wn-bg)" stroke="var(--wn-bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="11" font-weight="600" x="51" y="86" text-anchor="middle" fill="var(--wn)">Shared secret</text>
+    <line x1="94" y1="44" x2="110" y2="44" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#h0)"/>
+    <line x1="51" y1="72" x2="118" y2="60" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#h0)"/>
+    <rect x="112" y="26" width="110" height="52" rx="6" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="167" y="49" text-anchor="middle" fill="var(--tx)">HMAC-SHA256</text>
+    <text font-family="var(--font)" font-size="11" x="167" y="63" text-anchor="middle" fill="var(--tx2)">hash function</text>
+    <line x1="224" y1="52" x2="240" y2="52" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#h0)"/>
+    <rect x="242" y="26" width="108" height="52" rx="6" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="296" y="49" text-anchor="middle" fill="var(--tx)">X-Signature</text>
+    <text font-family="var(--font)" font-size="11" x="296" y="63" text-anchor="middle" fill="var(--tx2)">HTTP header</text>
+    <line x1="352" y1="52" x2="368" y2="52" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#h0)"/>
+    <line x1="392" y1="52" x2="408" y2="52" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#h0)"/>
+    <rect x="410" y="26" width="116" height="52" rx="6" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="468" y="49" text-anchor="middle" fill="var(--tx)">Recompute</text>
+    <text font-family="var(--font)" font-size="11" x="468" y="63" text-anchor="middle" fill="var(--tx2)">payload + same secret</text>
+    <line x1="528" y1="52" x2="544" y2="52" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#h0)"/>
+    <rect x="546" y="26" width="144" height="52" rx="6" fill="var(--ok-bg)" stroke="var(--ok-bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="618" y="47" text-anchor="middle" fill="var(--ok)">compare_digest()</text>
+    <text font-family="var(--font)" font-size="11" x="618" y="63" text-anchor="middle" fill="var(--ok)">constant-time check</text>
+    <text font-family="var(--font)" font-size="11" x="350" y="100" text-anchor="middle" fill="var(--tx3)">The shared secret never crosses the network — only the computed signature does</text>
+  </svg>
+  <div class="g2">
+    <div class="card">
+      <p class="lh"><span class="tag tac">Shopify</span>industry standard</p>
+      <p class="bp" style="margin-bottom:8px">Shopify signs the raw request body with a shared secret. The result arrives as <strong>base64</strong> in <code>X-Shopify-Hmac-SHA256</code>.</p>
+      <div class="code"><span class="kw">import</span> hmac, hashlib, base64
+
+<span class="kw">def</span> <span class="fn">verify</span>(secret, body, header):
+    computed = base64.b64encode(
+        hmac.<span class="fn">new</span>(secret.encode(), body,
+              hashlib.sha256).digest()
+    ).decode()
+    <span class="kw">return</span> hmac.<span class="fn">compare_digest</span>(computed, header)</div>
+    </div>
+    <div class="card">
+      <p class="lh"><span class="tag twn">Nova Poshta</span>custom — we proposed it</p>
+      <p class="bp" style="margin-bottom:8px">Nova Poshta's webhook API shipped without authentication. We proposed the same pattern: shared secret, HMAC over the body, signature in a header. It became a production requirement on both sides.</p>
+      <div class="code"><span class="cm"># Contract we defined with NP:</span>
+<span class="cm"># Header: X-NP-Signature</span>
+<span class="cm"># Value:  HMAC-SHA256(secret, body) → hex</span>
+
+<span class="fn">verify_np</span>(NP_SECRET, body, np_sig)</div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 4 — inside HMAC -->
+<div class="slide" id="s4">
+  <p class="sl">03 — signature logic</p>
+  <h1 class="st">Why HMAC and not just Hash(secret + body)?</h1>
+  <p class="ss">A hash gives bytes a fingerprint. HMAC proves the sender also knew the shared secret.</p>
+  <div class="g2">
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card">
+        <p class="lh" style="color:var(--er)">Plain hash — easy to misunderstand</p>
+        <div class="code" style="margin-bottom:8px"><span class="cm"># Not a signature</span>
+sig = sha256(body)</div>
+        <p class="bp">Anyone who changes the body can compute a new hash. It proves the payload has a fingerprint, but it does not prove who created it.</p>
+      </div>
+      <div class="card">
+        <p class="lh" style="color:var(--er)">Hash(secret + body) — still a bad custom scheme</p>
+        <div class="code" style="margin-bottom:8px"><span class="cm"># Looks better, but don't invent this</span>
+sig = sha256(secret + body)</div>
+        <p class="bp">With hash functions such as SHA-256, this pattern can be fragile because of length-extension attacks. The practical rule is simple: use HMAC instead of designing your own signature format.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card" style="height:100%">
+        <p class="lh" style="color:var(--ok)">HMAC — a standard keyed signature</p>
+        <div class="code" style="margin-bottom:8px">expected = hmac_sha256(secret, raw_body)
+
+<span class="kw">if</span> compare_digest(expected, received):
+    trust_the_payload()</div>
+        <ul class="pts">
+          <li>The secret stays on Shopify and on our server</li>
+          <li>Only the computed signature crosses the network</li>
+          <li>Changing one byte in the body changes the signature</li>
+          <li>Without the secret, the attacker cannot produce the same value</li>
+        </ul>
+        <div class="muted" style="margin-top:10px">
+          <p class="lh" style="font-size:12px">Presentation version</p>
+          <p class="bp" style="margin:0;font-size:12px">HMAC is not about hiding the payload. It is about proving that the payload was signed by someone who knows the same secret.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 5 — interactive HMAC -->
+<div class="slide" id="s5">
+  <p class="sl">04 — hands on</p>
+  <h1 class="st">Compute HMAC-SHA256 live</h1>
+  <p class="ss">Same inputs, same signature. Change the body or the secret, and the signature no longer matches.</p>
+  <div class="g2" style="margin-bottom:10px">
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label class="fl" for="hmac-secret">Shared secret (X-Shopify-Webhook-Hmac-Key)</label>
+        <input class="fi" id="hmac-secret" type="text" value="my_shopify_shared_secret" oninput="schedHMAC()">
+      </div>
+      <div>
+        <label class="fl" for="hmac-body">Request body (raw JSON)</label>
+        <textarea class="fta" id="hmac-body" oninput="schedHMAC()">{"topic":"orders/create","id":5001234,"total_price":"299.00","currency":"UAH"}</textarea>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label class="fl">X-Shopify-Hmac-SHA256 (base64 — this goes in the header)</label>
+        <div class="sig-out" id="hmac-b64" style="color:var(--ok)">computing…</div>
+      </div>
+      <div>
+        <label class="fl">Raw hex bytes</label>
+        <div class="sig-out" id="hmac-hex" style="font-size:10px;color:var(--tx3)">computing…</div>
+      </div>
+      <div id="hmac-status" style="font-size:11px;color:var(--tx3)">Uses browser's built-in <code>SubtleCrypto</code> — no libraries, no network.</div>
+    </div>
+  </div>
+  <div class="card">
+    <p class="lh">What you're seeing</p>
+    <p class="bp">The provider and the receiver both calculate the signature from the raw body and the shared secret. If the values match, the body was not changed and the sender knew the secret. If one character changes, the result becomes completely different.</p>
+  </div>
+</div>
+
+<!-- SLIDE 6 — two attacks -->
+<div class="slide" id="s6">
+  <p class="sl">05 — security depth</p>
+  <h1 class="st">Two things HMAC does not solve by itself</h1>
+  <p class="ss">A valid signature proves who signed the message. It does not prove that the message is fresh or new.</p>
+  <div class="g2">
+    <div class="card">
+      <p class="lh">Replay attack</p>
+      <p class="bp" style="margin-bottom:10px">If a valid signed request is captured and sent again later, HMAC still passes. The signature is real, but the event may be stale or duplicate.</p>
+      <svg width="100%" viewBox="0 0 290 88" style="display:block;margin-bottom:10px">
+        <defs><marker id="r0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+        <rect x="10" y="30" width="68" height="26" rx="6" fill="none" stroke="var(--bd2)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="44" y="47" text-anchor="middle" fill="var(--tx)">Sender</text>
+        <rect x="118" y="10" width="68" height="26" rx="6" fill="var(--er-bg)" stroke="var(--er-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="152" y="27" text-anchor="middle" fill="var(--er)">Attacker</text>
+        <rect x="212" y="50" width="68" height="26" rx="6" fill="none" stroke="var(--bd2)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" x="246" y="67" text-anchor="middle" fill="var(--tx)">Your app</text>
+        <line x1="80" y1="36" x2="116" y2="24" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#r0)"/>
+        <text font-family="var(--font)" font-size="10" x="98" y="22" text-anchor="middle" fill="var(--tx3)">intercept</text>
+        <line x1="168" y1="34" x2="214" y2="54" stroke="var(--er)" stroke-width="1" marker-end="url(#r0)"/>
+        <text font-family="var(--font)" font-size="10" x="204" y="43" fill="var(--er)">replay later</text>
+      </svg>
+      <div class="code"><span class="cm"># Prevention: check timestamp + deduplicate</span>
+age = now() - payload[<span class="str">"created_at"</span>]
+<span class="kw">if</span> age > <span class="fn">300</span>: reject()      <span class="cm"># 5-min window</span>
+<span class="kw">if</span> seen(payload[<span class="str">"id"</span>]): reject()  <span class="cm"># already stored</span></div>
+    </div>
+    <div class="card">
+      <p class="lh">Timing attack on signature comparison</p>
+      <p class="bp" style="margin-bottom:10px">A naive <code>==</code> can stop at the first mismatched byte. Tiny timing differences may leak how much of the signature was correct.</p>
+      <div class="code"><span class="cm"># Vulnerable — exits early on first mismatch</span>
+<span class="kw">if</span> received == expected: ...
+
+<span class="cm"># Safe — always takes the same time regardless</span>
+<span class="kw">import</span> hmac
+<span class="kw">if</span> hmac.<span class="fn">compare_digest</span>(received, expected): ...</div>
+      <p class="bp" style="margin-top:8px">The fix is small: use constant-time comparison, such as <code>hmac.compare_digest</code>, instead of a regular equality check.</p>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 7 — AI-era risk -->
+<div class="slide" id="s6a">
+  <p class="sl">06 — AI-era risk</p>
+  <h1 class="st">When a webhook wakes up an AI agent</h1>
+  <p class="ss">In AI workflows, a valid event can still contain hostile instructions. HMAC proves where the payload came from, not whether the text inside is safe.</p>
+  <div class="g2">
+    <div class="card">
+      <p class="lh"><span class="tag tac">GitHub Actions</span>Comment and Control</p>
+      <p class="bp" style="margin-bottom:10px">In 2026, researchers showed that PR titles, issue bodies and comments could hijack AI coding agents running in GitHub Actions. The agents treated attacker-controlled GitHub text as task context, executed tools and leaked credentials through GitHub itself.</p>
+      <svg width="100%" viewBox="0 0 300 126" style="display:block;margin:8px 0">
+        <defs><marker id="ai0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+        <rect x="8" y="12" width="78" height="34" rx="7" fill="var(--er-bg)" stroke="var(--er-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="47" y="28" text-anchor="middle" fill="var(--er)">PR title</text>
+        <text font-family="var(--font)" font-size="10" x="47" y="40" text-anchor="middle" fill="var(--er)">injected text</text>
+        <line x1="88" y1="29" x2="113" y2="29" stroke="var(--tx3)" stroke-width="0.7" marker-end="url(#ai0)"/>
+        <rect x="116" y="12" width="78" height="34" rx="7" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="155" y="28" text-anchor="middle" fill="var(--tx)">Webhook</text>
+        <text font-family="var(--font)" font-size="10" x="155" y="40" text-anchor="middle" fill="var(--tx2)">pull_request</text>
+        <line x1="196" y1="29" x2="221" y2="29" stroke="var(--tx3)" stroke-width="0.7" marker-end="url(#ai0)"/>
+        <rect x="224" y="12" width="68" height="34" rx="7" fill="var(--ac-bg)" stroke="var(--ac-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="258" y="28" text-anchor="middle" fill="var(--ac-tx)">AI agent</text>
+        <text font-family="var(--font)" font-size="10" x="258" y="40" text-anchor="middle" fill="var(--ac-tx)">tools + env</text>
+        <line x1="258" y1="48" x2="258" y2="72" stroke="var(--tx3)" stroke-width="0.7" marker-end="url(#ai0)"/>
+        <rect x="202" y="76" width="90" height="34" rx="7" fill="var(--wn-bg)" stroke="var(--wn-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="247" y="92" text-anchor="middle" fill="var(--wn)">Secrets</text>
+        <text font-family="var(--font)" font-size="10" x="247" y="104" text-anchor="middle" fill="var(--wn)">runner env</text>
+        <line x1="200" y1="93" x2="88" y2="93" stroke="var(--er)" stroke-width="1" marker-end="url(#ai0)"/>
+        <rect x="8" y="76" width="78" height="34" rx="7" fill="var(--er-bg)" stroke="var(--er-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="47" y="92" text-anchor="middle" fill="var(--er)">PR comment</text>
+        <text font-family="var(--font)" font-size="10" x="47" y="104" text-anchor="middle" fill="var(--er)">exfil channel</text>
+      </svg>
+      <p class="bp" style="font-size:12px;color:var(--tx3);margin:0">Source: Aonan Guan et al., "Comment and Control", April 2026.</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card">
+        <p class="lh">Why this belongs in a webhook talk</p>
+        <p class="bp" style="margin:0">The dangerous part is automatic activation. A GitHub event fires, a workflow starts, an AI agent reads untrusted text and then acts with the permissions of the automation environment.</p>
+      </div>
+      <div class="muted">
+        <p class="lh" style="font-size:12px">AI-era rule</p>
+        <p class="bp" style="margin:0;font-size:12px">HMAC proves the payload came from the provider. It does not make the payload safe to execute as instructions. If webhook data is later read by an AI agent, treat it as untrusted user content.</p>
+      </div>
+      <div class="card">
+        <p class="lh">Controls that matter</p>
+        <ul class="pts">
+          <li>Separate data from instructions in prompts</li>
+          <li>Give AI agents least-privilege tokens</li>
+          <li>Do not expose long-lived secrets to agent runtimes</li>
+          <li>Require approval before external writes or tool execution</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 8 — store first -->
+<div class="slide" id="s7">
+  <p class="sl">07 — architecture</p>
+  <h1 class="st">Store first, process later</h1>
+  <p class="ss">The endpoint should do the minimum: verify the request, save the raw event, and respond quickly.</p>
+  <svg width="100%" viewBox="0 0 700 96" style="display:block;margin-bottom:13px">
+    <defs><marker id="sf0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+    <rect x="10" y="22" width="90" height="40" rx="8" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="55" y="40" text-anchor="middle" fill="var(--tx)">Arrive</text>
+    <text font-family="var(--font)" font-size="11" x="55" y="54" text-anchor="middle" fill="var(--tx2)">POST /webhook</text>
+    <line x1="102" y1="42" x2="118" y2="42" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#sf0)"/>
+    <rect x="120" y="22" width="110" height="40" rx="8" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="175" y="40" text-anchor="middle" fill="var(--tx)">Verify HMAC</text>
+    <text font-family="var(--font)" font-size="11" x="175" y="54" text-anchor="middle" fill="var(--tx2)">compare_digest</text>
+    <line x1="232" y1="42" x2="248" y2="42" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#sf0)"/>
+    <rect x="250" y="22" width="94" height="40" rx="8" fill="var(--ac-bg)" stroke="var(--ac-bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="297" y="40" text-anchor="middle" fill="var(--ac-tx)">Store raw</text>
+    <text font-family="var(--font)" font-size="11" x="297" y="54" text-anchor="middle" fill="var(--ac-tx)">PostgreSQL</text>
+    <text font-family="var(--font)" font-size="11" x="210" y="82" text-anchor="middle" fill="var(--ok)">↑ 200 OK returned here — before any business logic</text>
+    <line x1="346" y1="42" x2="362" y2="42" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#sf0)"/>
+    <rect x="364" y="22" width="94" height="40" rx="8" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="411" y="40" text-anchor="middle" fill="var(--tx)">Redis queue</text>
+    <text font-family="var(--font)" font-size="11" x="411" y="54" text-anchor="middle" fill="var(--tx2)">async worker</text>
+    <line x1="460" y1="42" x2="476" y2="42" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#sf0)"/>
+    <rect x="478" y="22" width="94" height="40" rx="8" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="525" y="40" text-anchor="middle" fill="var(--tx)">Process</text>
+    <text font-family="var(--font)" font-size="11" x="525" y="54" text-anchor="middle" fill="var(--tx2)">NP lookup, sync</text>
+    <line x1="574" y1="42" x2="590" y2="42" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#sf0)"/>
+    <rect x="592" y="22" width="78" height="40" rx="8" fill="var(--ok-bg)" stroke="var(--ok-bd)" stroke-width="0.5"/>
+    <text font-family="var(--font)" font-size="12" font-weight="600" x="631" y="40" text-anchor="middle" fill="var(--ok)">Done</text>
+    <text font-family="var(--font)" font-size="11" x="631" y="54" text-anchor="middle" fill="var(--ok)">+ timestamps</text>
+  </svg>
+  <div class="g3">
+    <div class="muted"><p class="lh" style="font-size:13px">Why store raw?</p><p class="bp" style="margin:0">A Nova Poshta tracking lookup can take 1–3 seconds. If the endpoint waits for it, the provider may time out and retry. Saving first separates receipt from processing.</p></div>
+    <div class="muted"><p class="lh" style="font-size:13px">Respond in under 5 seconds</p><p class="bp" style="margin:0">Shopify marks delivery as failed if it does not receive a 2xx quickly. Database insert first, queue work later, response immediately.</p></div>
+    <div class="muted"><p class="lh" style="font-size:13px">Why Redis?</p><p class="bp" style="margin:0">Redis gives retries, worker concurrency and queue-depth visibility outside the HTTP request. A slow worker does not block incoming webhooks.</p></div>
+  </div>
+</div>
+
+<!-- SLIDE 9 — 200 on error -->
+<div class="slide" id="s8">
+  <p class="sl">08 — response strategy</p>
+  <h1 class="st">Return 200 after the event is safely stored</h1>
+  <p class="ss">Once the raw event is saved, a worker failure is an internal processing problem, not a delivery failure.</p>
+  <div class="g2">
+    <div>
+      <svg width="100%" viewBox="0 0 300 230" style="display:block">
+        <defs><marker id="d0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+        <rect x="80" y="8" width="140" height="34" rx="8" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" font-weight="600" x="150" y="25" text-anchor="middle" fill="var(--tx)">Processing error</text>
+        <text font-family="var(--font)" font-size="11" x="150" y="37" text-anchor="middle" fill="var(--tx2)">(data already stored in DB)</text>
+        <line x1="118" y1="44" x2="76" y2="76" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#d0)"/>
+        <text font-family="var(--font)" font-size="11" x="72" y="70" fill="var(--er)">return 500</text>
+        <line x1="182" y1="44" x2="224" y2="76" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#d0)"/>
+        <text font-family="var(--font)" font-size="11" x="195" y="70" fill="var(--ok)">return 200</text>
+        <rect x="8" y="78" width="128" height="34" rx="8" fill="var(--er-bg)" stroke="var(--er-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="72" y="96" text-anchor="middle" fill="var(--er)">Shopify retries</text>
+        <text font-family="var(--font)" font-size="11" x="72" y="107" text-anchor="middle" fill="var(--er)">semantically correct</text>
+        <rect x="164" y="78" width="128" height="34" rx="8" fill="var(--ok-bg)" stroke="var(--ok-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="228" y="96" text-anchor="middle" fill="var(--ok)">Subscription intact</text>
+        <text font-family="var(--font)" font-size="11" x="228" y="107" text-anchor="middle" fill="var(--ok)">data already stored</text>
+        <line x1="72" y1="114" x2="72" y2="132" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#d0)"/>
+        <rect x="8" y="134" width="128" height="46" rx="8" fill="var(--er-bg)" stroke="var(--er-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="72" y="152" text-anchor="middle" fill="var(--er)">After ~19 failures:</text>
+        <text font-family="var(--font)" font-size="11" x="72" y="165" text-anchor="middle" fill="var(--er)">subscription deleted</text>
+        <text font-family="var(--font)" font-size="11" x="72" y="177" text-anchor="middle" fill="var(--er)">you get an email</text>
+        <line x1="228" y1="114" x2="228" y2="132" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#d0)"/>
+        <rect x="164" y="134" width="128" height="46" rx="8" fill="var(--ok-bg)" stroke="var(--ok-bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="11" font-weight="600" x="228" y="152" text-anchor="middle" fill="var(--ok)">Alert via Sentry</text>
+        <text font-family="var(--font)" font-size="11" x="228" y="165" text-anchor="middle" fill="var(--ok)">raw data preserved</text>
+        <text font-family="var(--font)" font-size="11" x="228" y="177" text-anchor="middle" fill="var(--ok)">can replay later</text>
+        <line x1="228" y1="182" x2="228" y2="198" stroke="var(--tx3)" stroke-width="0.5" marker-end="url(#d0)"/>
+        <rect x="164" y="200" width="128" height="24" rx="6" fill="var(--s2)" stroke="var(--bd)" stroke-width="0.5"/>
+        <text font-family="var(--font)" font-size="12" font-weight="600" x="228" y="216" text-anchor="middle" fill="var(--tx)">No data loss</text>
+      </svg>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <p class="lh">Why this isn't cheating</p>
+        <p class="bp" style="margin:0">The webhook is stored before any business logic runs. If processing fails later, the data was still received. Returning 500 would tell Shopify to retry delivery even though the event is already in our database.</p>
+      </div>
+      <div class="card">
+        <p class="lh">What replaces the lost observability</p>
+        <ul class="pts">
+          <li>Sentry alert fires on every processing failure</li>
+          <li>Full stack trace with the webhook payload attached</li>
+          <li>Error rate tracked per provider (Shopify / NP)</li>
+          <li>Admin panel shows unprocessed events</li>
+          <li>Cron script monitors queue health</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 10 — retry & backoff -->
+<div class="slide" id="s9">
+  <p class="sl">09 — reliability</p>
+  <h1 class="st">Shopify doesn't give up after one failure</h1>
+  <p class="ss">If a delivery fails, Shopify retries the webhook 8 times over the next 4 hours. For Admin API subscriptions, repeated failures can end in automatic deletion.</p>
+  <div class="g2">
+    <div>
+      <svg width="100%" viewBox="0 0 300 240" style="display:block">
+        <!-- Y axis label -->
+        <text font-family="var(--font)" font-size="10" x="6" y="20" fill="var(--tx3)">delay</text>
+        <text font-family="var(--font)" font-size="10" x="6" y="30" fill="var(--tx3)">(min)</text>
+        <!-- bars representing delay before each retry -->
+        <!-- attempt labels on X -->
+        <!-- delays approx: 1, 2, 4, 8, 15, 30, 60, 120, 240 min -->
+        <!-- scale: 240 min = 200px height -->
+        <line x1="40" y1="10" x2="40" y2="205" stroke="var(--bd)" stroke-width="0.5"/>
+        <line x1="40" y1="205" x2="295" y2="205" stroke="var(--bd)" stroke-width="0.5"/>
+        <!-- gridlines -->
+        <line x1="40" y1="122" x2="295" y2="122" stroke="var(--bd)" stroke-width="0.3" stroke-dasharray="2 3"/>
+        <text font-family="var(--mono)" font-size="9" x="36" y="126" text-anchor="end" fill="var(--tx3)">60m</text>
+        <line x1="40" y1="39" x2="295" y2="39" stroke="var(--bd)" stroke-width="0.3" stroke-dasharray="2 3"/>
+        <text font-family="var(--mono)" font-size="9" x="36" y="43" text-anchor="end" fill="var(--tx3)">3h</text>
+        <!-- bar data: x, height (px), label -->
+        <!-- delays: 1m=0.8, 2m=1.6, 5m=4.2, 10m=8.3, 20m=16.7, 40m=33, 90m=75, 3h=150, 6h>205 clamp -->
+        <rect x="47" y="204" width="18" height="1" rx="2" fill="var(--ok)"/>
+        <text font-family="var(--mono)" font-size="8" x="56" y="216" text-anchor="middle" fill="var(--tx3)">R1</text>
+        <text font-family="var(--mono)" font-size="8" x="56" y="225" text-anchor="middle" fill="var(--tx3)">~1m</text>
+
+        <rect x="72" y="203" width="18" height="2" rx="2" fill="var(--ok)"/>
+        <text font-family="var(--mono)" font-size="8" x="81" y="216" text-anchor="middle" fill="var(--tx3)">R2</text>
+        <text font-family="var(--mono)" font-size="8" x="81" y="225" text-anchor="middle" fill="var(--tx3)">~2m</text>
+
+        <rect x="97" y="200" width="18" height="5" rx="2" fill="var(--ok)"/>
+        <text font-family="var(--mono)" font-size="8" x="106" y="216" text-anchor="middle" fill="var(--tx3)">R3</text>
+        <text font-family="var(--mono)" font-size="8" x="106" y="225" text-anchor="middle" fill="var(--tx3)">~5m</text>
+
+        <rect x="122" y="196" width="18" height="9" rx="2" fill="var(--wn)"/>
+        <text font-family="var(--mono)" font-size="8" x="131" y="216" text-anchor="middle" fill="var(--tx3)">R4</text>
+        <text font-family="var(--mono)" font-size="8" x="131" y="225" text-anchor="middle" fill="var(--tx3)">~10m</text>
+
+        <rect x="147" y="188" width="18" height="17" rx="2" fill="var(--wn)"/>
+        <text font-family="var(--mono)" font-size="8" x="156" y="216" text-anchor="middle" fill="var(--tx3)">R5</text>
+        <text font-family="var(--mono)" font-size="8" x="156" y="225" text-anchor="middle" fill="var(--tx3)">~20m</text>
+
+        <rect x="172" y="172" width="18" height="33" rx="2" fill="var(--wn)"/>
+        <text font-family="var(--mono)" font-size="8" x="181" y="216" text-anchor="middle" fill="var(--tx3)">R6</text>
+        <text font-family="var(--mono)" font-size="8" x="181" y="225" text-anchor="middle" fill="var(--tx3)">~40m</text>
+
+        <rect x="197" y="143" width="18" height="62" rx="2" fill="var(--er)" opacity="0.7"/>
+        <text font-family="var(--mono)" font-size="8" x="206" y="216" text-anchor="middle" fill="var(--tx3)">R7</text>
+        <text font-family="var(--mono)" font-size="8" x="206" y="225" text-anchor="middle" fill="var(--tx3)">~90m</text>
+
+        <rect x="222" y="80" width="18" height="125" rx="2" fill="var(--er)" opacity="0.7"/>
+        <text font-family="var(--mono)" font-size="8" x="231" y="216" text-anchor="middle" fill="var(--tx3)">R8</text>
+        <text font-family="var(--mono)" font-size="8" x="231" y="225" text-anchor="middle" fill="var(--tx3)">~3h</text>
+
+        <text font-family="var(--font)" font-size="10" font-weight="600" x="274" y="190" text-anchor="middle" fill="var(--er)">8 retries</text>
+        <text font-family="var(--font)" font-size="9" x="274" y="202" text-anchor="middle" fill="var(--er)">~4h window</text>
+      </svg>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card">
+        <p class="lh">Why exponential backoff?</p>
+        <p class="bp">If your server is down, retrying every second makes recovery harder. Backoff gives the receiver time to recover and keeps the sender from wasting delivery attempts.</p>
+      </div>
+      <div class="card">
+        <p class="lh">This is sender self-protection</p>
+        <p class="bp">If the failures continue, Shopify stops retrying. For webhook subscriptions configured through the Admin API, repeated failures can lead to automatic deletion.</p>
+      </div>
+      <div class="muted">
+        <p class="lh" style="font-size:12px">Implication for architecture</p>
+        <p class="bp" style="margin:0;font-size:12px">The store-first + 200 OK pattern keeps the endpoint healthy even when processing is behind. Shopify sees successful delivery, while workers recover separately.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 11 — sender self-protection / email -->
+<div class="slide" id="s10">
+  <p class="sl">10 — real world</p>
+  <h1 class="st">After repeated failures, the subscription can disappear</h1>
+  <p class="ss">This is not theoretical. On 2026-05-09, Shopify removed a production webhook after repeated failures.</p>
+  <div class="g2">
+    <div>
+      <div class="email-mock">
+        <div class="email-meta">From: <strong>partners@shopify.com</strong> · To: developer</div>
+        <p style="margin-bottom:10px">Your webhook for <strong>products/update</strong> at</p>
+        <p style="word-break:break-all;color:#2563eb;margin-bottom:10px;font-size:12px">https://[platform-url]/shopify/webhooks?credentials_id=…&amp;source=Shopify&amp;signature=0476d4ace0d143f…</p>
+        <p style="margin-bottom:10px">has been removed on <strong>2026-05-09 12:20:13 UTC</strong> because it's failing to return a successful response.</p>
+        <p style="margin-bottom:10px">When the issue is fixed, you'll need to <strong>re-create your webhook</strong>.</p>
+        <p style="font-size:12px;color:#666">For more information, view <a class="email-link" href="#">failed webhook deliveries</a> on your Partner Dashboard.</p>
+      </div>
+      <p class="bp" style="margin-top:10px;font-size:12px;color:var(--tx3)">The URL includes a signed <code>credentials_id</code>, so each merchant has a unique endpoint. When the subscription is removed, that merchant stops receiving product sync events until we re-register it through the API.</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card">
+        <p class="lh">What happened</p>
+        <p class="bp">A deployment caused the endpoint to return non-2xx responses long enough for Shopify to keep retrying and eventually remove the webhook subscription. Once removed, it does not return automatically.</p>
+      </div>
+      <div class="card">
+        <p class="lh">How we monitor now</p>
+        <ul class="pts">
+          <li>Admin panel shows active webhook subscriptions per merchant</li>
+          <li>A cron script runs periodically and compares registered subscriptions against expected ones</li>
+          <li>If a subscription is missing → alert fires, auto-registration triggered</li>
+          <li>The script also checks Redis queue depth for processing lag</li>
+        </ul>
+      </div>
+      <div class="muted">
+        <p class="lh" style="font-size:12px">Disabling is Shopify's feature</p>
+        <p class="bp" style="margin:0;font-size:12px">The sender is doing reliability engineering too, just for itself. If our receiver keeps failing, Shopify protects its own delivery system by eventually removing the failing subscription.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 12 — ordering + idempotency -->
+<div class="slide" id="s11">
+  <p class="sl">11 — reliability</p>
+  <h1 class="st">Same event twice. Wrong order. Both at once.</h1>
+  <p class="ss">Webhooks are delivered at-least-once, not exactly-once. Arrival order is not always event order.</p>
+  <div class="g2">
+    <div class="card">
+      <p class="lh">Out-of-order delivery</p>
+      <svg width="100%" viewBox="0 0 290 118" style="display:block;margin:8px 0">
+        <text font-family="var(--font)" font-size="11" fill="var(--tx3)" x="0" y="14">Sent by Shopify (chronological)</text>
+        <line x1="0" y1="26" x2="280" y2="26" stroke="var(--bd2)" stroke-width="0.5"/>
+        <circle cx="48" cy="26" r="5" fill="var(--tx3)"/>
+        <text font-family="var(--font)" font-size="11" x="48" y="43" text-anchor="middle" fill="var(--tx2)">Shipped</text>
+        <circle cx="144" cy="26" r="5" fill="var(--tx3)"/>
+        <text font-family="var(--font)" font-size="11" x="144" y="43" text-anchor="middle" fill="var(--tx2)">In transit</text>
+        <circle cx="240" cy="26" r="5" fill="var(--tx3)"/>
+        <text font-family="var(--font)" font-size="11" x="240" y="43" text-anchor="middle" fill="var(--tx2)">Delivered</text>
+        <text font-family="var(--font)" font-size="11" fill="var(--tx3)" x="0" y="76">Arrived at our endpoint (actual order)</text>
+        <line x1="0" y1="88" x2="280" y2="88" stroke="var(--bd2)" stroke-width="0.5"/>
+        <circle cx="28" cy="88" r="5" fill="var(--er)"/>
+        <text font-family="var(--font)" font-size="11" x="28" y="105" text-anchor="middle" fill="var(--er)">Delivered</text>
+        <circle cx="120" cy="88" r="5" fill="var(--tx3)"/>
+        <text font-family="var(--font)" font-size="11" x="120" y="105" text-anchor="middle" fill="var(--tx2)">Shipped</text>
+        <circle cx="212" cy="88" r="5" fill="var(--tx3)"/>
+        <text font-family="var(--font)" font-size="11" x="212" y="105" text-anchor="middle" fill="var(--tx2)">In transit</text>
+      </svg>
+      <p class="bp">Store <code>event_at</code> from the provider payload, not only <code>received_at</code> from your server clock. Sort by when it happened, not when it arrived.</p>
+    </div>
+    <div class="card">
+      <p class="lh">Idempotency — handle duplicates</p>
+      <p class="bp" style="margin-bottom:8px">The same event can arrive more than once. Without deduplication, an order may be processed twice or a product update may create a duplicate record.</p>
+      <div class="code"><span class="cm"># Check before enqueuing</span>
+wh_id = payload[<span class="str">"id"</span>]
+
+<span class="kw">if</span> <span class="fn">already_seen</span>(wh_id):
+    <span class="kw">return</span> <span class="fn">200</span>()  <span class="cm"># idempotent no-op</span>
+
+<span class="fn">store</span>(wh_id, payload,
+      event_at=payload[<span class="str">"created_at"</span>])
+<span class="fn">enqueue</span>(wh_id)</div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <p class="lh">Four timestamps stored per webhook — full traceability</p>
+    <div class="g4" style="margin-top:8px">
+      <div class="muted" style="padding:8px"><p style="font-size:12px;font-weight:600;margin:0;font-family:var(--mono)">event_at</p><p style="font-size:11px;color:var(--tx2);margin:3px 0 0">When it happened at provider</p></div>
+      <div class="muted" style="padding:8px"><p style="font-size:12px;font-weight:600;margin:0;font-family:var(--mono)">received_at</p><p style="font-size:11px;color:var(--tx2);margin:3px 0 0">When it hit our endpoint</p></div>
+      <div class="muted" style="padding:8px"><p style="font-size:12px;font-weight:600;margin:0;font-family:var(--mono)">queued_at</p><p style="font-size:11px;color:var(--tx2);margin:3px 0 0">When placed in Redis</p></div>
+      <div class="muted" style="padding:8px"><p style="font-size:12px;font-weight:600;margin:0;font-family:var(--mono)">processed_at</p><p style="font-size:11px;color:var(--tx2);margin:3px 0 0">When worker finished</p></div>
+    </div>
+    <p class="bp" style="margin-top:10px;font-size:12px">Final takeaway: in production, webhook design is not just an endpoint. It is signature verification, fast acknowledgement, queued processing, idempotency, ordering and monitoring working together.</p>
+  </div>
+</div>
+
+</div><!-- /pres -->
+<div class="nav" id="nav">
+  <button class="nb" id="prev" onclick="go(-1)" disabled>← Prev</button>
+  <span class="nav-info" id="navinfo">1 / 13</span>
+  <button class="nb" id="next" onclick="go(1)">Next →</button>
+</div>
+</div><!-- /deck -->
+
+<script>
+// Slide navigation
+const slides = document.querySelectorAll('.slide');
+const n = slides.length;
+let cur = 0;
+
+function show(i) {
+  slides[cur].classList.remove('active');
+  cur = i;
+  slides[cur].classList.add('active');
+  document.getElementById('prev').disabled = cur === 0;
+  document.getElementById('next').disabled = cur === n - 1;
+  document.getElementById('navinfo').textContent = (cur + 1) + ' / ' + n;
+  document.getElementById('pb').style.width = ((cur / (n - 1)) * 100) + '%';
+  if (cur === 5) setTimeout(updateHMAC, 100);
+}
+function go(d) { if (cur + d >= 0 && cur + d < n) show(cur + d); }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go(1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   go(-1);
+});
+
+// HMAC playground (Slide 5 — index 5)
+let hmacTimer;
+function schedHMAC() { clearTimeout(hmacTimer); hmacTimer = setTimeout(updateHMAC, 280); }
+
+async function updateHMAC() {
+  const secret = document.getElementById('hmac-secret').value;
+  const body   = document.getElementById('hmac-body').value;
+  const b64el  = document.getElementById('hmac-b64');
+  const hexel  = document.getElementById('hmac-hex');
+  const status = document.getElementById('hmac-status');
+  if (!secret || !body) { b64el.textContent = '—'; hexel.textContent = '—'; return; }
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(secret),
+      { name: 'HMAC', hash: { name: 'SHA-256' } },
+      false, ['sign']
+    );
+    const sig   = await crypto.subtle.sign('HMAC', key, enc.encode(body));
+    const bytes = new Uint8Array(sig);
+    const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    const b64   = btoa(String.fromCharCode(...bytes));
+    b64el.textContent = b64;
+    hexel.textContent = hex;
+    status.textContent = 'Updated at ' + new Date().toLocaleTimeString() + ' · Uses SubtleCrypto, no network.';
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+}
+
+// Init
+show(0);
+</script>
+</body>
+</html>
